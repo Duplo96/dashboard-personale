@@ -282,7 +282,7 @@ const views = {
   },
   bills() {
     const rows = [...D.bills].sort((a, b) => b.due.localeCompare(a.due));
-    return `<div class="vh"><h1>Bollette</h1><button class="btn" data-add="q">+ Aggiungi</button></div>
+    return `<div class="vh"><h1>Bollette</h1>${document.body.classList.contains('ro') ? '' : '<button class="btn" data-add="q">+ Aggiungi</button>'}</div>
     <div class="glass card">${rows.map((b) => `<div class="row">
       <div class="t">${esc(b.supplier)}<small>${billMeta(b)}</small></div>
       <div class="amt">${eur(b.amount)}</div>${billPill(b)}

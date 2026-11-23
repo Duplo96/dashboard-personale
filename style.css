@@ -105,6 +105,7 @@ svg text{fill:var(--mut);font-size:11px}
 /* mobile */
 @media(max-width:700px){
   body{overflow:auto}
+  #ver{order:-1;position:sticky;top:0;z-index:9;font-size:12px;opacity:1;color:var(--tx);text-align:left;padding:2px 0 6px;background:rgba(13,17,23,.85);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
   .app{height:auto;min-height:100vh;padding:calc(env(safe-area-inset-top) + 12px) 12px 96px;gap:10px}
   header .title,header .logo b,.sp,#openVault,#exportMobile{display:none}
   nav{position:fixed;left:10px;right:10px;bottom:calc(env(safe-area-inset-bottom) + 8px);z-index:10;padding:8px;gap:4px;justify-content:space-between;background:rgba(20,26,38,.82);border:1px solid var(--bd);border-radius:24px;backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px)}
@@ -129,3 +130,4 @@ svg text{fill:var(--mut);font-size:11px}
 .tag{background:rgba(185,162,255,.18);color:#b9a2ff;border-radius:6px;padding:1px 7px;font-size:11px;margin-left:4px}
 
 #ver{text-align:center;color:var(--mut);font-size:11px;padding:10px 0 4px;opacity:.7}
+@media(max-width:700px){#ver{font-size:13px;opacity:1;color:var(--tx);font-weight:600}}
