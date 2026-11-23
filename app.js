@@ -32,7 +32,7 @@ if (!window.api) { // versione iPhone: sola lettura dallo snapshot
       catch (_) { document.querySelector('.ovl small').textContent = 'Password errata, riprova.'; }
     }
   })());
-  window.api = { load: async () => JSON.parse(JSON.stringify((await getSnap()).data)), save: async () => true, openVault: async () => {}, photo: async () => (await getSnap()).photo || null, credit: async () => (await getSnap()).credit || null, exportMobile: async () => null };
+  window.api = { load: async () => JSON.parse(JSON.stringify((await getSnap()).data)), save: async () => true, openVault: async () => {}, photo: async () => (await getSnap()).photo || null, credit: async () => (await getSnap()).credit || null, exportMobile: async () => null, openRaw: async () => {}, version: async () => { const s = await getSnap(); return { version: s.version, released: s.released, exported: s.exported }; } };
 }
 function askPass(title, label, remember) {
   return new Promise((res) => {
@@ -50,6 +50,56 @@ function migrate() {
   D.bills = D.bills || []; D.vehicles = D.vehicles || []; D.contracts = D.contracts || [];
   D.bills.forEach((b) => { if (b.paid && !b.paidDate) b.paidDate = b.due; delete b.paid; if (!('paidDate' in b)) b.paidDate = null; });
   D.vehicles.forEach((v) => { v.paid = v.paid || {}; });
+}
+
+const TYPES = ['Abbonamento', 'Luce', 'Gas', 'Acqua', 'Internet', 'Telefono', 'Rifiuti', 'Altro'];
+function addPeriod(s, repeat) {
+  const [y, m, d] = s.split('-').map(Number);
+  const t = repeat === 'annuale' ? new Date(y + 1, m - 1, 1) : new Date(y, m, 1);
+  const last = new Date(t.getFullYear(), t.getMonth() + 1, 0).getDate();
+  t.setDate(Math.min(d, last)); return iso(t);
+}
+function openAdd(startTab) {
+  if (document.querySelector('.ovl')) return;
+  const o = document.createElement('div'); o.className = 'ovl';
+  o.innerHTML = `<form class="glass addbox"><h3>Aggiungi</h3>
+    <div class="tabs"><button type="button" data-t="q" class="on">Spesa rapida</button><button type="button" data-t="f">Bolletta completa</button></div>
+    <div data-p="q" class="pane">
+      <small>Per abbonamenti e spese semplici: fai da solo in pochi secondi.</small>
+      <input name="supplier" placeholder="Nome (es. Netflix, Palestra)" required>
+      <div class="two"><select name="type">${TYPES.map((t) => `<option>${t}</option>`).join('')}</select><input name="amount" type="number" step="0.01" min="0" placeholder="Importo €" required></div>
+      <div class="two"><input name="due" type="date" required value="${today()}" title="Prossima scadenza"><select name="repeat"><option value="">Una tantum</option><option value="mensile" selected>Ogni mese</option><option value="annuale">Ogni anno</option></select></div>
+      <label><input type="checkbox" name="paid"> Già pagata</label>
+      <div class="act"><button type="button" class="cancel">Annulla</button><button class="btn">Aggiungi</button></div>
+    </div>
+    <div data-p="f" class="pane" hidden>
+      <small>Per bollette con intestatario, POD/PDR, periodo e dettagli: lascia fare a me.</small>
+      <ol class="steps"><li>Metti il PDF o la foto nella cartella <b>raw</b>.</li><li>Scrivimi in chat «ho aggiunto una bolletta».</li><li>La leggo, la registro qui e nella wiki, poi la vedi comparire.</li></ol>
+      <div class="act"><button type="button" class="cancel">Chiudi</button><button type="button" class="btn" id="goRaw">Apri cartella raw</button></div>
+    </div></form>`;
+  document.body.appendChild(o);
+  const f = o.querySelector('form'), close = () => o.remove();
+  const tab = (t) => { f.querySelectorAll('[data-t]').forEach((b) => b.classList.toggle('on', b.dataset.t === t)); f.querySelectorAll('[data-p]').forEach((p) => p.hidden = p.dataset.p !== t); };
+  f.querySelectorAll('[data-t]').forEach((b) => b.onclick = () => tab(b.dataset.t));
+  f.querySelectorAll('.cancel').forEach((b) => b.onclick = close);
+  o.onmousedown = (e) => { if (e.target === o) close(); };
+  f.elements.type.onchange = () => { f.elements.repeat.value = f.elements.type.value === 'Abbonamento' ? 'mensile' : ''; };
+  o.querySelector('#goRaw').onclick = () => window.api.openRaw();
+  f.onsubmit = (e) => {
+    e.preventDefault();
+    const v = Object.fromEntries(new FormData(f));
+    const mk = (due, paidDate) => ({ id: uid(), supplier: v.supplier.trim(), type: v.type, amount: Number(v.amount), due, paidDate, repeat: v.repeat || null, source: 'manuale' });
+    D.bills.push(mk(v.due, v.paid ? v.due : null));
+    if (v.paid && v.repeat) D.bills.push(mk(addPeriod(v.due, v.repeat), null));
+    close(); save(); view = 'bills'; render();
+  };
+  tab(startTab || 'q'); f.querySelector('input[name=supplier]').focus();
+}
+function billMeta(b) {
+  const bits = [b.type, 'scade ' + fmt(b.due)];
+  if (b.repeat) bits.push('ogni ' + (b.repeat === 'annuale' ? 'anno' : 'mese'));
+  const det = [b.holder && 'Intestatario: ' + b.holder, b.pod && 'POD/PDR ' + b.pod, b.period && 'Periodo ' + b.period, b.invoice && 'Fatt. ' + b.invoice].filter(Boolean);
+  return esc(bits.join(' · ')) + (det.length ? '<br>' + esc(det.join(' · ')) : '') + (b.source === 'claude' ? ' <span class="tag">da Claude</span>' : '');
 }
 
 /* ---------- pills ---------- */
@@ -232,14 +282,9 @@ const views = {
   },
   bills() {
     const rows = [...D.bills].sort((a, b) => b.due.localeCompare(a.due));
-    return `<h1>Bollette</h1>
-    <div class="glass card" style="margin-bottom:14px"><form id="fb">
-      <input name="supplier" placeholder="Fornitore" required>
-      <select name="type"><option>Luce</option><option>Gas</option><option>Acqua</option><option>Internet</option><option>Telefono</option><option>Rifiuti</option><option>Altro</option></select>
-      <input name="amount" type="number" step="0.01" placeholder="Importo €" required>
-      <input name="due" type="date" required title="Scadenza"><button class="btn">Aggiungi</button></form></div>
+    return `<div class="vh"><h1>Bollette</h1><button class="btn" data-add="q">+ Aggiungi</button></div>
     <div class="glass card">${rows.map((b) => `<div class="row">
-      <div class="t">${esc(b.supplier)}<small>${esc(b.type)} · scade ${fmt(b.due)}</small></div>
+      <div class="t">${esc(b.supplier)}<small>${billMeta(b)}</small></div>
       <div class="amt">${eur(b.amount)}</div>${billPill(b)}
       ${b.paidDate ? `<button class="mini" data-unpay="${b.id}">Annulla</button>` : `<input type="date" id="pd-${b.id}" value="${today()}" title="Data pagamento"><button class="mini" data-pay="${b.id}">Segna pagata</button>`}
       <button class="x" data-del="bills:${b.id}">&#10005;</button></div>`).join('') || '<div class="empty">Nessuna bolletta.</div>'}</div>`;
@@ -268,10 +313,10 @@ function render() {
   $('#banner').hidden = !D.demo;
   document.querySelectorAll('#nav button').forEach((b) => b.classList.toggle('on', b.dataset.v === view));
   const f = (id, fn) => { const el = $(id); if (el) el.onsubmit = (e) => { e.preventDefault(); fn(Object.fromEntries(new FormData(el))); save(); render(); }; };
-  f('#fb', (o) => D.bills.push({ id: uid(), ...o, amount: Number(o.amount), paidDate: null }));
+  document.querySelectorAll('[data-add]').forEach((x) => x.onclick = () => openAdd(x.dataset.add));
   f('#fc', (o) => D.contracts.push({ id: uid(), ...o, cost: Number(o.cost) || 0 }));
   const vget = (s) => { const [id, k] = s.split(':'); return [D.vehicles.find((v) => v.id === id), k]; };
-  document.querySelectorAll('[data-pay]').forEach((x) => x.onclick = () => { const b = D.bills.find((i) => i.id === x.dataset.pay); b.paidDate = $('#pd-' + b.id).value || today(); save(); render(); });
+  document.querySelectorAll('[data-pay]').forEach((x) => x.onclick = () => { const b = D.bills.find((i) => i.id === x.dataset.pay); b.paidDate = $('#pd-' + b.id).value || today(); if (b.repeat) { const nd = addPeriod(b.due, b.repeat); if (!D.bills.some((i) => i.supplier === b.supplier && i.due === nd)) D.bills.push({ id: uid(), supplier: b.supplier, type: b.type, amount: b.amount, due: nd, paidDate: null, repeat: b.repeat, source: b.source || 'manuale' }); } save(); render(); });
   document.querySelectorAll('[data-unpay]').forEach((x) => x.onclick = () => { D.bills.find((i) => i.id === x.dataset.unpay).paidDate = null; save(); render(); });
   document.querySelectorAll('[data-vpay]').forEach((x) => x.onclick = () => { const [v, k] = vget(x.dataset.vpay); v.paid[k] = today(); save(); render(); });
   document.querySelectorAll('[data-vunpay]').forEach((x) => x.onclick = () => { const [v, k] = vget(x.dataset.vunpay); delete v.paid[k]; save(); render(); });
@@ -286,7 +331,12 @@ function render() {
 }
 
 $('#nav').onclick = (e) => { if (e.target.dataset.v) { view = e.target.dataset.v; render(); } };
+$('#addBtn').onclick = () => openAdd('q');
 $('#openVault').onclick = () => window.api.openVault();
+window.addEventListener('focus', async () => { // ricarica se i dati sono cambiati su disco (es. bolletta registrata da Claude)
+  if (document.querySelector('.ovl') || document.querySelector('input:focus')) return;
+  try { const d = await window.api.load(); if (JSON.stringify(d) !== JSON.stringify(D)) { D = d; migrate(); render(); } } catch (_) {}
+});
 $('#exportMobile').onclick = async () => {
   const a = await askPass('Esporta per iPhone', 'Scegli una password: i dati verranno cifrati con questa e la chiederà l\'iPhone', false);
   if (a.cancelled) return;
@@ -298,4 +348,8 @@ $('#clearDemo').onclick = () => {
   D.contracts = D.contracts.filter((c) => !/esempio/i.test(c.name));
   D.demo = false; save(); render();
 };
+const fdt = (s) => new Date(s).toLocaleString('it-IT', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+window.api.version().then((v) => {
+  $('#ver').textContent = 'v' + (v.version || '?') + (v.released ? ' · aggiornata il ' + fdt(v.released) : '') + (v.exported ? ' · dati del ' + fdt(v.exported) : '');
+}).catch(() => {});
 Promise.all([window.api.load(), window.api.photo(), window.api.credit()]).then(([d, p, c]) => { D = d; photo = p; photoCredit = c; migrate(); render(); });
