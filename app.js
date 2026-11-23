@@ -350,6 +350,6 @@ $('#clearDemo').onclick = () => {
 };
 const fdt = (s) => new Date(s).toLocaleString('it-IT', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
 window.api.version().then((v) => {
-  $('#ver').textContent = 'v' + (v.version || '?') + (v.released ? ' · aggiornata il ' + fdt(v.released) : '') + (v.exported ? ' · dati del ' + fdt(v.exported) : '');
+  $('#ver').textContent = 'v' + (v.version || '?') + (v.released ? ' · ' + fdt(v.released) : '');
 }).catch(() => {});
 Promise.all([window.api.load(), window.api.photo(), window.api.credit()]).then(([d, p, c]) => { D = d; photo = p; photoCredit = c; migrate(); render(); });
