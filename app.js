@@ -52,7 +52,13 @@ function migrate() {
   D.vehicles.forEach((v) => { v.paid = v.paid || {}; });
 }
 
-const TYPES = ['Abbonamento', 'Luce', 'Gas', 'Acqua', 'Internet', 'Telefono', 'Rifiuti', 'Altro'];
+const TYPES = ['Abbonamento', 'Luce', 'Gas', 'Acqua', 'Internet', 'Telefono', 'Rifiuti', 'Rata auto', 'Spese auto', 'Altro'];
+const GROUPS = { 'Casa': ['Luce', 'Gas', 'Acqua', 'Rifiuti'], 'Telefono e internet': ['Internet', 'Telefono'], 'Abbonamenti': ['Abbonamento'], 'Auto': ['Rata auto', 'Spese auto'], 'Altro': [] };
+const GNAMES = Object.keys(GROUPS);
+const groupOf = (t) => GNAMES.find((g) => GROUPS[g].includes(t)) || 'Altro';
+const gColor = (g) => COLORS[GNAMES.indexOf(g)];
+let billFilter = 'Tutte';
+const FAR = 183; // oltre 6 mesi si mostra la data invece dei giorni
 function addPeriod(s, repeat) {
   const [y, m, d] = s.split('-').map(Number);
   const t = repeat === 'annuale' ? new Date(y + 1, m - 1, 1) : new Date(y, m, 1);
@@ -83,7 +89,7 @@ function openAdd(startTab) {
   f.querySelectorAll('[data-t]').forEach((b) => b.onclick = () => tab(b.dataset.t));
   f.querySelectorAll('.cancel').forEach((b) => b.onclick = close);
   o.onmousedown = (e) => { if (e.target === o) close(); };
-  f.elements.type.onchange = () => { f.elements.repeat.value = f.elements.type.value === 'Abbonamento' ? 'mensile' : ''; };
+  f.elements.type.onchange = () => { f.elements.repeat.value = ['Abbonamento', 'Rata auto'].includes(f.elements.type.value) ? 'mensile' : ''; };
   o.querySelector('#goRaw').onclick = () => window.api.openRaw();
   f.onsubmit = (e) => {
     e.preventDefault();
@@ -108,12 +114,14 @@ const billPill = (b) => {
   const d = days(b.due);
   if (d < 0) return `<span class="pill bad">Scaduta da ${-d} g</span>`;
   if (d <= 14) return `<span class="pill warn">Scade tra ${d} g</span>`;
+  if (d > FAR) return `<span class="pill neu">Scade il ${fmt(b.due)}</span>`;
   return `<span class="pill neu">Scade tra ${d} g</span>`;
 };
 const dlPill = (s, label = 'Tra') => {
   const d = days(s);
   if (d < 0) return `<span class="pill bad">Scaduta da ${-d} g</span>`;
   if (d <= 30) return `<span class="pill warn">${label} ${d} g</span>`;
+  if (d > FAR) return `<span class="pill neu">Scade il ${fmt(s)}</span>`;
   return `<span class="pill neu">${label} ${d} g</span>`;
 };
 
@@ -121,7 +129,7 @@ const VEH = [['insurance', 'insuranceDue', 'Assicurazione'], ['tax', 'taxDue', '
 
 function allDeadlines() {
   const out = [];
-  D.bills.filter((b) => !b.paidDate).forEach((b) => out.push({ what: `Bolletta ${b.type}`, who: b.supplier, date: b.due, extra: eur(b.amount) }));
+  D.bills.filter((b) => !b.paidDate).forEach((b) => out.push({ what: ['Casa', 'Telefono e internet'].includes(groupOf(b.type)) ? `Bolletta ${b.type}` : b.type, who: b.supplier, date: b.due, extra: eur(b.amount) }));
   D.vehicles.forEach((v) => VEH.forEach(([k, f, l]) => v[f] && !v.paid[k] && out.push({ what: l, who: v.name, date: v[f] })));
   D.contracts.forEach((c) => c.end && out.push({ what: 'Fine contratto', who: c.name, date: c.end, contract: true }));
   return out.sort((a, b) => a.date.localeCompare(b.date));
@@ -135,10 +143,10 @@ function areaChart() {
   const cy = String(new Date().getFullYear());
   if (!years.includes(chartYear)) chartYear = years.includes(cy) ? cy : (years[years.length - 1] || cy);
   const cats = {};
-  D.bills.forEach((b) => { cats[b.type] = (cats[b.type] || 0) + Number(b.amount || 0); });
-  const names = Object.keys(cats).sort((a, b) => cats[b] - cats[a]);
+  D.bills.forEach((b) => { cats[groupOf(b.type)] = true; });
+  const names = GNAMES.filter((g) => cats[g]);
   const months = Array.from({ length: 12 }, (_, i) => ({ l: new Date(2000, i, 1).toLocaleDateString('it-IT', { month: 'short' }), by: {}, t: 0 }));
-  D.bills.forEach((b) => { const d = dt(b); if (d.slice(0, 4) === chartYear) { const m = months[+d.slice(5, 7) - 1]; m.by[b.type] = (m.by[b.type] || 0) + Number(b.amount || 0); m.t += Number(b.amount || 0); } });
+  D.bills.forEach((b) => { const d = dt(b); if (d.slice(0, 4) === chartYear) { const m = months[+d.slice(5, 7) - 1]; const g = groupOf(b.type); m.by[g] = (m.by[g] || 0) + Number(b.amount || 0); m.t += Number(b.amount || 0); } });
   const rawMax = Math.max(...months.map((m) => m.t), 1);
   const step = rawMax <= 100 ? 25 : rawMax <= 250 ? 50 : rawMax <= 500 ? 100 : 250;
   const top = Math.ceil(rawMax / step) * step;
@@ -148,14 +156,14 @@ function areaChart() {
   for (let v = 0; v <= top; v += step) grid += `<line x1="${x0}" x2="${x1}" y1="${yy(v)}" y2="${yy(v)}" stroke="rgba(255,255,255,.08)"/><text x="${x0 - 8}" y="${yy(v) + 4}" text-anchor="end">${eur(v).replace(',00', '')}</text>`;
   const bars = months.map((m, i) => {
     const x = x0 + i * slot + (slot - bw) / 2; let acc = 0;
-    const segs = names.map((n) => { const v = m.by[n] || 0; if (!v) return ''; const h = (v / top) * (y1 - y0); const y = yy(acc + v); acc += v; return `<rect x="${x}" y="${y}" width="${bw}" height="${h}" fill="${COLORS[names.indexOf(n) % 7]}" rx="3"/>`; }).join('');
+    const segs = names.map((n) => { const v = m.by[n] || 0; if (!v) return ''; const h = (v / top) * (y1 - y0); const y = yy(acc + v); acc += v; return `<rect x="${x}" y="${y}" width="${bw}" height="${h}" fill="${gColor(n)}" rx="3"/>`; }).join('');
     const val = m.t ? `<text x="${x + bw / 2}" y="${yy(m.t) - 6}" text-anchor="middle" style="fill:#eef1f6;font-size:10px">${eur(m.t).replace(',00', '')}</text>` : '';
     return `${segs}${val}<text x="${x + bw / 2}" y="${H - 14}" text-anchor="middle">${esc(m.l)}</text>`;
   }).join('');
   const tot = months.reduce((s, m) => s + m.t, 0);
-  const legend = names.map((n, i) => `<span><i style="background:${COLORS[i % 7]}"></i>${esc(n)}</span>`).join('');
+  const legend = names.map((n) => `<span><i style="background:${gColor(n)}"></i>${esc(n)}</span>`).join('');
   const yb = years.map((y) => `<button class="ybtn ${y === chartYear ? 'on' : ''}" data-cy="${y}">${y}</button>`).join('');
-  return `<div class="chead"><h2>Spesa bollette ${chartYear} · totale ${eur(tot)}</h2><div class="ybs">${yb}</div></div>
+  return `<div class="chead"><h2>Spese ${chartYear} · totale ${eur(tot)}</h2><div class="ybs">${yb}</div></div>
   <svg viewBox="0 0 ${W} ${H}" width="100%">${grid}${bars}</svg><div class="clegend">${legend}</div>`;
 }
 function areaChartOld() {
@@ -178,13 +186,13 @@ function areaChartOld() {
 
 function donut() {
   const by = {};
-  D.bills.forEach((b) => { by[b.type] = (by[b.type] || 0) + Number(b.amount || 0); });
+  D.bills.forEach((b) => { const g = groupOf(b.type); by[g] = (by[g] || 0) + Number(b.amount || 0); });
   const ent = Object.entries(by).sort((a, b) => b[1] - a[1]);
   const tot = ent.reduce((s, e) => s + e[1], 0);
   if (!tot) return '<div class="empty">Nessuna spesa registrata.</div>';
   const R = 52, C = 2 * Math.PI * R; let off = 0;
-  const arcs = ent.map(([k, v], i) => { const len = (v / tot) * C; const el = `<circle r="${R}" cx="70" cy="70" fill="none" stroke="${COLORS[i % 7]}" stroke-width="22" stroke-dasharray="${len - 2} ${C - len + 2}" stroke-dashoffset="${-off}" transform="rotate(-90 70 70)"/>`; off += len; return el; }).join('');
-  const leg = ent.map(([k, v], i) => `<div><i style="background:${COLORS[i % 7]}"></i>${esc(k)} · ${eur(v)}</div>`).join('');
+  const arcs = ent.map(([k, v], i) => { const len = (v / tot) * C; const el = `<circle r="${R}" cx="70" cy="70" fill="none" stroke="${gColor(k)}" stroke-width="22" stroke-dasharray="${len - 2} ${C - len + 2}" stroke-dashoffset="${-off}" transform="rotate(-90 70 70)"/>`; off += len; return el; }).join('');
+  const leg = ent.map(([k, v], i) => `<div><i style="background:${gColor(k)}"></i>${esc(k)} · ${eur(v)}</div>`).join('');
   return `<div class="donut"><svg viewBox="0 0 140 140" width="170">${arcs}<text x="70" y="68" text-anchor="middle" style="fill:#f3eeea;font-size:15px;font-weight:700">${eur(tot)}</text><text x="70" y="84" text-anchor="middle">totale</text></svg><div class="leg">${leg}</div></div>`;
 }
 
@@ -266,9 +274,9 @@ const views = {
     const nextCar = v ? VEH.map(([k, f]) => (v[f] && !v.paid[k]) ? days(v[f]) : null).filter((x) => x !== null).sort((a, b) => a - b)[0] ?? null : null;
     const recent = [...D.bills].sort((a, b) => b.due.localeCompare(a.due)).slice(0, 4);
     return `<div class="grid g4">
-      ${kpi('Bollette', D.bills.length, ['Aperte', open.length], ['Pagate nel mese', paidM], 'bills')}
+      ${kpi('Spese', D.bills.length, ['Aperte', open.length], ['Pagate nel mese', paidM], 'bills')}
       ${kpi('Da pagare', eur(tot), ['Scadute', late], ['In arrivo', open.length - late], 'bills')}
-      ${kpi('Auto', D.vehicles.length, ['Prossima scadenza', nextCar === null ? '—' : nextCar + ' g'], ['Veicolo', v ? esc(v.name.replace('Volkswagen ', '')) : '—'], 'cars')}
+      ${kpi('Auto', D.vehicles.length, ['Prossima scadenza', nextCar === null ? '—' : nextCar > FAR ? fmt(iso(new Date(new Date().setDate(new Date().getDate() + nextCar)))) : nextCar + ' g'], ['Veicolo', v ? esc(v.name.replace('Volkswagen ', '')) : '—'], 'cars')}
       ${kpi('Contratti', D.contracts.length, ['Attivi', D.contracts.length], ['In scadenza 90 g', soon90], 'contracts')}
     </div>
     <div class="grid g2" style="margin-top:14px">
@@ -276,18 +284,20 @@ const views = {
       <div class="glass card"><h2>Prossime scadenze · ${urgent} entro 30 giorni</h2>${dl.slice(0, 4).map((x) => `<div class="row"><div class="t">${esc(x.what)}<small>${esc(x.who)} · ${fmt(x.date)}</small></div><div class="amt">${esc(x.extra || '')}</div>${x.contract ? dlPill(x.date, 'Scade tra') : dlPill(x.date)}</div>`).join('') || '<div class="empty">Nessuna scadenza.</div>'}</div>
     </div>
     <div class="grid g2b" style="margin-top:14px">
-      <div class="glass card"><h2>Bollette recenti</h2>${recent.map((b) => `<div class="row"><div class="t">${esc(b.supplier)}<small>${esc(b.type)} · ${fmt(b.due)}</small></div><div class="amt">${eur(b.amount)}</div>${billPill(b)}</div>`).join('') || '<div class="empty">Nessuna bolletta.</div>'}</div>
+      <div class="glass card"><h2>Spese recenti</h2>${recent.map((b) => `<div class="row"><div class="t">${esc(b.supplier)}<small>${esc(b.type)} · ${fmt(b.due)}</small></div><div class="amt">${eur(b.amount)}</div>${billPill(b)}</div>`).join('') || '<div class="empty">Nessuna spesa.</div>'}</div>
       <div class="glass card"><h2>Spesa per categoria</h2>${donut()}</div>
     </div>`;
   },
   bills() {
-    const rows = [...D.bills].sort((a, b) => b.due.localeCompare(a.due));
-    return `<div class="vh"><h1>Bollette</h1>${document.body.classList.contains('ro') ? '' : '<button class="btn" data-add="q">+ Aggiungi</button>'}</div>
+    const rows = [...D.bills].filter((b) => billFilter === 'Tutte' || groupOf(b.type) === billFilter).sort((a, b) => b.due.localeCompare(a.due));
+    const chips = ['Tutte', ...GNAMES].map((g) => `<button class="ybtn ${g === billFilter ? 'on' : ''}" data-flt="${g}">${g}</button>`).join('');
+    return `<div class="vh"><h1>Spese</h1>${document.body.classList.contains('ro') ? '' : '<button class="btn" data-add="q">+ Aggiungi</button>'}</div>
+    <div class="ybs flt">${chips}</div>
     <div class="glass card">${rows.map((b) => `<div class="row">
       <div class="t">${esc(b.supplier)}<small>${billMeta(b)}</small></div>
       <div class="amt">${eur(b.amount)}</div>${billPill(b)}
       ${b.paidDate ? `<button class="mini" data-unpay="${b.id}">Annulla</button>` : `<input type="date" id="pd-${b.id}" value="${today()}" title="Data pagamento"><button class="mini" data-pay="${b.id}">Segna pagata</button>`}
-      <button class="x" data-del="bills:${b.id}">&#10005;</button></div>`).join('') || '<div class="empty">Nessuna bolletta.</div>'}</div>`;
+      <button class="x" data-del="bills:${b.id}">&#10005;</button></div>`).join('') || '<div class="empty">Nessuna spesa.</div>'}</div>`;
   },
   cars() {
     return `<h1>Auto</h1>${D.vehicles.map(carCard).join('') || '<div class="glass card empty">Nessun veicolo.</div>'}`;
@@ -327,6 +337,7 @@ function render() {
   });
   document.querySelectorAll('[data-del]').forEach((x) => x.onclick = () => { const [k, id] = x.dataset.del.split(':'); D[k] = D[k].filter((i) => i.id !== id); save(); render(); });
   document.querySelectorAll('[data-cy]').forEach((x) => x.onclick = () => { chartYear = x.dataset.cy; render(); });
+  document.querySelectorAll('[data-flt]').forEach((x) => x.onclick = () => { billFilter = x.dataset.flt; render(); });
   document.querySelectorAll('[data-go]').forEach((x) => x.onclick = () => { view = x.dataset.go; render(); });
 }
 

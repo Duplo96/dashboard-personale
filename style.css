@@ -130,3 +130,4 @@ svg text{fill:var(--mut);font-size:11px}
 /* versione: stesso stile dei riquadri e dei pill dell'app */
 #ver{align-self:center;padding:6px 14px;border-radius:99px;background:var(--glass);border:1px solid var(--bd);color:var(--mut);font-size:12px;text-align:center;backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px)}
 @media(max-width:700px){#ver{order:-1;position:sticky;top:calc(env(safe-area-inset-top) + 4px);z-index:9;background:rgba(20,26,38,.82);color:var(--tx);border-radius:16px}}
+.flt{flex-wrap:wrap;margin-bottom:12px}
